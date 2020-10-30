@@ -1,0 +1,197 @@
+
+#include <windows.h>
+#include <iostream>
+#include <wchar.h>
+#include "interception.h"
+using namespace std;
+
+//環境に合わせて変更してください。
+const wchar_t KEYBD_HID[] = L"HID\\VID_1532&PID_0244&REV_0200&MI_01&Col01";
+const wchar_t KEYBD_PAD[] = L"HID\\VID_1532&PID_0244&REV_0200&MI_00";
+const wchar_t MOUSE_HID[] = L"HID\\VID_1532&PID_0244&REV_0200&MI_02";
+
+int main() {
+    // 高優先度化
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+
+    //Interceptionのインスタンス生成
+    auto context = interception_create_context();
+    if (!context)return 1;
+    interception_set_filter(context, interception_is_keyboard,
+        INTERCEPTION_FILTER_KEY_DOWN |
+        INTERCEPTION_FILTER_KEY_UP |
+        INTERCEPTION_KEY_E0 |
+        INTERCEPTION_KEY_E1);
+    interception_set_filter(context, interception_is_mouse,
+        INTERCEPTION_MOUSE_WHEEL |
+        INTERCEPTION_FILTER_MOUSE_MIDDLE_BUTTON_DOWN |
+        INTERCEPTION_FILTER_MOUSE_MIDDLE_BUTTON_UP
+        );
+
+
+    //  Tartarus V2を探す
+    InterceptionDevice keyboard = INTERCEPTION_MAX_DEVICE, analogpad = INTERCEPTION_MAX_DEVICE, mouse = INTERCEPTION_MAX_DEVICE;
+    wchar_t buf[500];
+    for (size_t i = 0;i < INTERCEPTION_MAX_KEYBOARD;i++) {
+        InterceptionDevice d = INTERCEPTION_KEYBOARD(i);
+        if (interception_get_hardware_id(context, d, buf, sizeof(buf)) &&
+            wcscmp(KEYBD_HID, buf) == 0) {
+            keyboard = d;
+            break;
+        }
+    }
+    for (size_t i = 0;i < INTERCEPTION_MAX_KEYBOARD;i++) {
+        InterceptionDevice d = INTERCEPTION_KEYBOARD(i);
+        if (interception_get_hardware_id(context, d, buf, sizeof(buf)) &&
+            wcscmp(KEYBD_PAD, buf) == 0) {
+            analogpad = d;
+            break;
+        }
+    }
+    for (InterceptionDevice i = 0;i < INTERCEPTION_MAX_MOUSE;i++) {
+        InterceptionDevice d = INTERCEPTION_MOUSE(i);
+        if (interception_get_hardware_id(context, d, buf, sizeof(buf)) &&
+            wcscmp(MOUSE_HID, buf) == 0) {
+            mouse = d;
+            break;
+        }
+    }
+    if (keyboard == INTERCEPTION_MAX_DEVICE || mouse == INTERCEPTION_MAX_DEVICE || analogpad == INTERCEPTION_MAX_DEVICE) {
+        interception_destroy_context(context);
+        return 1;
+    }
+
+    // 入力を処理する
+    InterceptionDevice device;
+    InterceptionStroke stroke;
+    while (interception_receive(context, device = interception_wait(context), &stroke, 1) > 0) {
+        if (device == keyboard || device == analogpad) {
+            InterceptionKeyStroke& s = *(InterceptionKeyStroke*)&stroke;
+            bool isKeySend = true;
+            switch (s.code)
+            {
+            case 2:
+                s.code = 0x01;       //Esc
+                break;
+
+            case 3:
+                s.code = 0x08;      //7
+                break;
+
+            case 4:
+                s.code = 0x09;      //8
+                break;
+
+            case 5:
+                s.code = 0x02;      //1
+                break;
+
+            case 6:
+                s.code = 0x03;      //2
+
+            case 15:
+                break;
+
+            case 16:
+                break;
+
+            case 17:
+                break;
+
+            case 18:
+                s.code = 0x04;      //3
+                break;
+
+            case 19:
+                s.code = 0x05;      //4
+                break;
+
+            case 58:
+                isKeySend = false;
+                s.code = 0x2A; interception_send(context, device, &stroke, 1);      //Shift
+                s.code = 0x21; interception_send(context, device, &stroke, 1);      //F
+                break;
+
+            case 30:
+                break;
+
+            case 31:
+                break;
+
+            case 32:
+                break;
+
+            case 33:
+                s.code = 0x06;      //5
+                break;
+
+            case 42:
+                s.code = 0x2C;      //Z
+                break;
+
+            case 44:
+                isKeySend = false; //無効化
+                break;
+
+            case 45:
+                isKeySend = false; //無効化
+                break;
+
+            case 46:
+                s.code = 0x2D;
+                break;
+
+            case 57:
+                break;
+
+            case 56:
+                s.code = 0x07;      //6
+                break;
+
+            case 75:
+                break;
+
+            case 77:
+                break;
+
+            case 72:
+                break;
+
+            case 80:
+                break;
+
+            default:
+                break;
+            }
+
+            /* isKeySend が false にされていない場合send1回 */
+            if(isKeySend)
+                interception_send(context, device, &stroke, 1);
+        }
+        //ホイールは既定を使うのでコメントアウト
+        //else if (device == mouse) {
+        //    InterceptionMouseStroke& s = *(InterceptionMouseStroke*)&stroke;
+        //    cout << "Mouse Input"
+        //        << " State=" << s.state
+        //        << " Rolling=" << s.rolling
+        //        << " Flags=" << s.flags
+        //        << " (x,y)=(" << s.x << "," << s.y << ")"
+        //        << endl;
+        //}
+        else {
+            //他のデバイスの入力は通過させる
+            interception_send(context, device, &stroke, 1);
+            //if (interception_is_keyboard(device)) {//Escapeで終了
+            //    InterceptionKeyStroke& s = *(InterceptionKeyStroke*)&stroke;
+            //    if (s.code == 1) break;
+            //    else
+            //        cout << "Keyboard Input "
+            //        << "ScanCode=" << s.code
+            //        << " State=" << s.state << endl;
+            //}
+        }
+    }
+
+    interception_destroy_context(context);
+    return 0;
+}
